@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/bluesky-social/indigo/api/atproto"
 	"github.com/bluesky-social/indigo/api/bsky"
@@ -29,6 +30,11 @@ func main() {
 	err = dbX.PingContext(ctx)
 	if err != nil {
 		panic(fmt.Errorf("error pinging database: %w", err))
+	}
+
+	_, err = dbX.ExecContext(ctx, migrations)
+	if err != nil {
+		panic(fmt.Errorf("error running migrations: %w", err))
 	}
 
 	wssConn, _, err := websocket.Dial(ctx, "wss://bsky.social/xrpc/com.atproto.sync.subscribeRepos", nil)
@@ -108,6 +114,38 @@ func main() {
 
 							// fmt.Printf("new post: %q by %s\n", r.Text, profile.Handle)
 							fmt.Printf("new post: %q\n", r.Text)
+
+							_, err := dbX.ExecContext(
+								ctx,
+								`
+INSERT INTO posts (uri, cid, replyParent, replyRoot, indexedAt, text, createdAt)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`,
+								opt.Path,
+								opt.Cid.String(),
+								func() *string {
+									if r.Reply == nil || r.Reply.Parent == nil {
+										return nil
+									}
+
+									uri := r.Reply.Parent.Uri
+									return &uri
+								}(),
+								func() *string {
+									if r.Reply == nil || r.Reply.Root == nil {
+										return nil
+									}
+
+									uri := r.Reply.Root.Uri
+									return &uri
+								}(),
+								time.Now(),
+								r.Text,
+								r.CreatedAt,
+							)
+							if err != nil {
+								panic(fmt.Errorf("error inserting post into database: %w", err))
+							}
 						}
 					}
 				}
