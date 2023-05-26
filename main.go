@@ -16,30 +16,36 @@ import (
 	"github.com/bluesky-social/indigo/xrpc"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"go.uber.org/zap"
 	"nhooyr.io/websocket"
 )
 
 func main() {
 	ctx := context.Background()
 
+	log, err := zap.NewDevelopment()
+	if err != nil {
+		panic(fmt.Errorf("error creating logger: %w", err))
+	}
+
 	dbX, err := sqlx.Open("postgres", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
 	if err != nil {
-		panic(fmt.Errorf("error opening database: %w", err))
+		log.Fatal("error opening database", zap.Error(err))
 	}
 	defer dbX.Close()
 	err = dbX.PingContext(ctx)
 	if err != nil {
-		panic(fmt.Errorf("error pinging database: %w", err))
+		log.Fatal("error pinging database", zap.Error(err))
 	}
 
 	_, err = dbX.ExecContext(ctx, migrations)
 	if err != nil {
-		panic(fmt.Errorf("error running migrations: %w", err))
+		log.Fatal("error running migrations", zap.Error(err))
 	}
 
 	wssConn, _, err := websocket.Dial(ctx, "wss://bsky.social/xrpc/com.atproto.sync.subscribeRepos", nil)
 	if err != nil {
-		panic(fmt.Errorf("error dialing bluesky websocket: %w", err))
+		log.Fatal("error dialing bluesky websocket", zap.Error(err))
 	}
 	defer wssConn.Close(websocket.StatusInternalError, "unexpected shutdown")
 
@@ -52,7 +58,7 @@ func main() {
 		},
 	)
 	if err != nil {
-		panic(fmt.Errorf("error creating session: %w", err))
+		log.Fatal("error creating session", zap.Error(err))
 	}
 
 	xrpcClient := newXRPCClient(&xrpc.AuthInfo{
@@ -63,19 +69,35 @@ func main() {
 	})
 	_ = xrpcClient
 
-	// TODO: ping frequently? see events.HandleRepoStream()
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		var err error
+		for {
+			select {
+			case <-ticker.C:
+				err = wssConn.Ping(ctx)
+				if err != nil {
+					log.Warn("error pinging websocket", zap.Error(err))
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	var reader io.Reader
 	for {
 		_, reader, err = wssConn.Reader(ctx)
 		if err != nil {
-			panic(fmt.Errorf("error getting reader from websocket connection: %w", err))
+			log.Fatal("error getting reader from websocket connection", zap.Error(err))
 		}
 
 		var header events.EventHeader
 		err = header.UnmarshalCBOR(reader)
 		if err != nil {
-			panic(fmt.Errorf("error reading event header: %w", err))
+			log.Fatal("error reading event header", zap.Error(err))
 		}
 
 		switch header.Op {
@@ -86,14 +108,14 @@ func main() {
 				var commitEvent atproto.SyncSubscribeRepos_Commit
 				err := commitEvent.UnmarshalCBOR(reader)
 				if err != nil {
-					panic(fmt.Errorf("error reading commit event: %w", err))
+					log.Fatal("error reading commit event", zap.Error(err))
 				}
 
 				// TODO: check for out of order events? see events.HandleRepoStream()
 
 				eventRepo, err := repo.ReadRepoFromCar(ctx, bytes.NewReader(commitEvent.Blocks))
 				if err != nil {
-					panic(fmt.Errorf("error reading repo from car: %w", err))
+					log.Fatal("error reading repo from car", zap.Error(err))
 				}
 
 				for _, opt := range commitEvent.Ops {
@@ -101,7 +123,7 @@ func main() {
 					case repomgr.EvtKindCreateRecord:
 						_, record, err := eventRepo.GetRecord(ctx, opt.Path)
 						if err != nil {
-							panic(fmt.Errorf("error getting record from repo: %w", err))
+							log.Fatal("error getting record from repo", zap.Error(err))
 						}
 
 						switch r := record.(type) {
@@ -113,7 +135,7 @@ func main() {
 							//}
 
 							// fmt.Printf("new post: %q by %s\n", r.Text, profile.Handle)
-							fmt.Printf("new post: %q\n", r.Text)
+							log.Debug("new post", zap.String("text", r.Text))
 
 							_, err := dbX.ExecContext(
 								ctx,
@@ -144,7 +166,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 								r.CreatedAt,
 							)
 							if err != nil {
-								panic(fmt.Errorf("error inserting post into database: %w", err))
+								log.Fatal("error inserting post into database", zap.Error(err))
 							}
 						}
 					}
@@ -155,12 +177,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 			var errframe events.ErrorFrame
 			err := errframe.UnmarshalCBOR(reader)
 			if err != nil {
-				panic(fmt.Errorf("error reading error frame: %w", err))
+				log.Fatal("error reading error frame", zap.Error(err))
 			}
 
-			panic(fmt.Errorf("received error frame: %s: %s", errframe.Error, errframe.Message))
+			log.Fatal("received error frame", zap.String("error", errframe.Error), zap.String("message", errframe.Message))
 		default:
-			panic(fmt.Errorf("received unrecognized event stream type: %d", header.Op))
+			log.Fatal("received unrecognized event stream type", zap.Int64("type", header.Op))
 		}
 	}
 
