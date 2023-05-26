@@ -14,14 +14,14 @@ import (
 	"github.com/bluesky-social/indigo/repomgr"
 	"github.com/bluesky-social/indigo/xrpc"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/lib/pq"
 	"nhooyr.io/websocket"
 )
 
 func main() {
 	ctx := context.Background()
 
-	dbX, err := sqlx.Open("sqlite3", "./db.sqlite")
+	dbX, err := sqlx.Open("postgres", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
 	if err != nil {
 		panic(fmt.Errorf("error opening database: %w", err))
 	}
