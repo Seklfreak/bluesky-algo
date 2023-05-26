@@ -69,23 +69,23 @@ func main() {
 	})
 	_ = xrpcClient
 
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-
-		var err error
-		for {
-			select {
-			case <-ticker.C:
-				err = wssConn.Ping(ctx)
-				if err != nil {
-					log.Warn("error pinging websocket", zap.Error(err))
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	//go func() {
+	//	ticker := time.NewTicker(30 * time.Second)
+	//	defer ticker.Stop()
+	//
+	//	var err error
+	//	for {
+	//		select {
+	//		case <-ticker.C:
+	//			err = wssConn.Ping(ctx)
+	//			if err != nil {
+	//				log.Warn("error pinging websocket", zap.Error(err))
+	//			}
+	//		case <-ctx.Done():
+	//			return
+	//		}
+	//	}
+	//}()
 
 	var reader io.Reader
 	for {
