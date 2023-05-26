@@ -4,6 +4,8 @@ go 1.20
 
 require (
 	github.com/bluesky-social/indigo v0.0.0-20230521020811-8be05e4183a0
+	github.com/jmoiron/sqlx v1.3.5
+	github.com/mattn/go-sqlite3 v1.14.16
 	nhooyr.io/websocket v1.8.7
 )
 

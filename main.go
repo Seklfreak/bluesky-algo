@@ -13,17 +13,29 @@ import (
 	"github.com/bluesky-social/indigo/repo"
 	"github.com/bluesky-social/indigo/repomgr"
 	"github.com/bluesky-social/indigo/xrpc"
+	"github.com/jmoiron/sqlx"
+	_ "github.com/mattn/go-sqlite3"
 	"nhooyr.io/websocket"
 )
 
 func main() {
 	ctx := context.Background()
 
-	c, _, err := websocket.Dial(ctx, "wss://bsky.social/xrpc/com.atproto.sync.subscribeRepos", nil)
+	dbX, err := sqlx.Open("sqlite3", "./db.sqlite")
+	if err != nil {
+		panic(fmt.Errorf("error opening database: %w", err))
+	}
+	defer dbX.Close()
+	err = dbX.PingContext(ctx)
+	if err != nil {
+		panic(fmt.Errorf("error pinging database: %w", err))
+	}
+
+	wssConn, _, err := websocket.Dial(ctx, "wss://bsky.social/xrpc/com.atproto.sync.subscribeRepos", nil)
 	if err != nil {
 		panic(fmt.Errorf("error dialing bluesky websocket: %w", err))
 	}
-	defer c.Close(websocket.StatusInternalError, "unexpected shutdown")
+	defer wssConn.Close(websocket.StatusInternalError, "unexpected shutdown")
 
 	xrpcSession, err := atproto.ServerCreateSession(
 		ctx,
@@ -43,12 +55,13 @@ func main() {
 		Handle:     xrpcSession.Handle,
 		Did:        xrpcSession.Did,
 	})
+	_ = xrpcClient
 
 	// TODO: ping frequently? see events.HandleRepoStream()
 
 	var reader io.Reader
 	for {
-		_, reader, err = c.Reader(ctx)
+		_, reader, err = wssConn.Reader(ctx)
 		if err != nil {
 			panic(fmt.Errorf("error getting reader from websocket connection: %w", err))
 		}
@@ -88,12 +101,13 @@ func main() {
 						switch r := record.(type) {
 						case *bsky.FeedPost:
 							// TODO: cache profiles
-							profile, err := bsky.ActorGetProfile(ctx, xrpcClient, commitEvent.Repo)
-							if err != nil {
-								panic(fmt.Errorf("error getting profile: %w", err))
-							}
+							//profile, err := bsky.ActorGetProfile(ctx, xrpcClient, commitEvent.Repo)
+							//if err != nil {
+							//	panic(fmt.Errorf("error getting profile: %w", err))
+							//}
 
-							fmt.Printf("new post: %q by %s\n", r.Text, profile.Handle)
+							// fmt.Printf("new post: %q by %s\n", r.Text, profile.Handle)
+							fmt.Printf("new post: %q\n", r.Text)
 						}
 					}
 				}
