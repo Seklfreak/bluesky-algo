@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -14,6 +16,8 @@ import (
 	"github.com/bluesky-social/indigo/repo"
 	"github.com/bluesky-social/indigo/repomgr"
 	"github.com/bluesky-social/indigo/xrpc"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"go.uber.org/zap"
@@ -42,6 +46,41 @@ func main() {
 	if err != nil {
 		log.Fatal("error running migrations", zap.Error(err))
 	}
+
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Get("/xrpc/app.bsky.feed.getFeedSkeleton", func(w http.ResponseWriter, r *http.Request) {
+		var output bsky.FeedGetFeedSkeleton_Output
+
+		var post string
+		err := dbX.GetContext(
+			ctx,
+			&post,
+			`
+SELECT uri
+FROM posts
+ORDER BY indexedAt DESC
+LIMIT 1
+;
+`,
+		)
+		if err != nil {
+			log.Error("error getting latest post", zap.Error(err))
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		output.Feed = []*bsky.FeedDefs_SkeletonFeedPost{
+			{
+				Post: post,
+			},
+		}
+
+		json.NewEncoder(w).Encode(output)
+	})
+	go func() {
+		http.ListenAndServe(":4000", r)
+	}()
 
 	wssConn, _, err := websocket.Dial(ctx, "wss://bsky.social/xrpc/com.atproto.sync.subscribeRepos", nil)
 	if err != nil {
@@ -120,6 +159,7 @@ func main() {
 
 				for _, opt := range commitEvent.Ops {
 					switch repomgr.EventKind(opt.Action) {
+					// TODO: implement update, delete
 					case repomgr.EvtKindCreateRecord:
 						_, record, err := eventRepo.GetRecord(ctx, opt.Path)
 						if err != nil {
@@ -142,6 +182,7 @@ func main() {
 								`
 INSERT INTO posts (uri, cid, replyParent, replyRoot, indexedAt, text, createdAt)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
+;
 `,
 								opt.Path,
 								opt.Cid.String(),
@@ -163,7 +204,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 								}(),
 								time.Now(),
 								r.Text,
-								r.CreatedAt,
+								r.CreatedAt, // TODO: fix date parsing
 							)
 							if err != nil {
 								log.Fatal("error inserting post into database", zap.Error(err))
